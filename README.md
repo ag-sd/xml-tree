@@ -6,4 +6,6 @@ A tree viewer for XML documents
 - [ ] Free-text search across file
 - [ ] Generate XPath for selected node
 - [ ] Find by XPath
+- [ ] Expand 1 level
+- [ ] Expand All children recursively
 - [ ] Convert to JSON

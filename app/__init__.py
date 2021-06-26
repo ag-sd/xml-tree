@@ -1,5 +1,9 @@
 
 import logging
+import os
+import sys
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
 
 
 def _get_logger(app_name):
