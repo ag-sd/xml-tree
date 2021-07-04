@@ -1,15 +1,16 @@
 import datetime
 import os
 import sys
+import typing
 
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QTextDocument
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize, QItemSelectionModel, QVariant
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QTextDocument, QColor
 from PyQt5.QtWidgets import QTreeView, QApplication, QDockWidget, QLineEdit, QPushButton, QCheckBox, QHBoxLayout, \
-    QVBoxLayout, QGroupBox, QComboBox, QStyledItemDelegate, QStyleOptionViewItem, QStyle
+    QVBoxLayout, QGroupBox, QComboBox, QStyledItemDelegate, QStyleOptionViewItem, QStyle, QAbstractItemView
 from lxml import etree
 
 import app
-from app.Menu import XMLTreeViewContextMenu
+from app import AppSettings
 
 _SEARCH_CRITERIA = {
         "Contains": Qt.MatchContains,
@@ -25,65 +26,48 @@ class XMLStandardItem(QStandardItem):
     __ROOT_ICON = QIcon.fromTheme("folder")
     __NODE_ICON = QIcon.fromTheme("text-x-generic")
 
-    _NODE_COLORS = {
-        "node": "Blue",
-        "comment": "DarkGreen",
-        "key": "Purple",
-        "value": "Black",
-        "attribute": "DarkGrey"
-    }
-
     def __init__(self, node):
         super().__init__()
         self.node = node
         self.display_text = None
         self.html_text = None
+        self.highlight = False
+        self.colors = AppSettings.color_theme()
         self._create_display_texts()
 
-    # def data(self, role: int = Qt.UserRole + 1) -> typing.Any:
-    #     if role == Qt.UserRole:
-    #         return self.node
-    #     elif role == Qt.DecorationRole:
-    #         print("Return Icon")
-    #         self.st
-    #     return QStandardItem.data(self, role)
+    def data(self, role: int = Qt.UserRole + 1) -> typing.Any:
+        if role == Qt.BackgroundColorRole and self.highlight:
+            return QVariant(QColor(self.colors["highlight"]))
+        return QStandardItem.data(self, role)
 
     def _create_display_texts(self):
         if len(self.node):
             text = self._clean_text(self.node.tag)
-            html = f"<p><span style='color:{self._NODE_COLORS['node']};'>{text}</span></p>"
+            html = f"<p><span style='color:{self.colors['node']};'>{text}</span></p>"
             self.setIcon(self.__ROOT_ICON)
         elif self.node.tag is etree.Comment:
             text = self._clean_text(f"#  {self.node.text}")
-            html = f"<i style='color:{self._NODE_COLORS['comment']};'>{text}</i>"
+            html = f"<i style='color:{self.colors['comment']};'>{text}</i>"
         else:
             key = self._clean_text(self.node.tag)
             value = self._clean_text(self.node.text)
             text = f"{key} = {value}"
             html = f"<p>" \
-                   f"<span style='color:{self._NODE_COLORS['key']};'>{key}</span>" \
+                   f"<span style='color:{self.colors['key']};'>{key}</span>" \
                    f" = " \
-                   f"<span style='color:{self._NODE_COLORS['value']};'>{value}</span>" \
+                   f"<span style='color:{self.colors['value']};'>{value}</span>" \
                    f"</p>"
             self.setIcon(self.__NODE_ICON)
 
-        attr_text, attr_html = self._format_attributes(self.node.attrib)
-        if attr_text:
-            text = text.replace("</p>", f"  {attr_text}</p>")
-            html = html.replace("</p>", f"  {attr_html}</p>")
+        if AppSettings.show_attributes():
+            attr_text, attr_html = self._format_attributes(self.node.attrib)
+            if attr_text:
+                text = text.replace("</p>", f"  {attr_text}</p>")
+                html = html.replace("</p>", f"  {attr_html}</p>")
         self.html_text = html
         self.setText(text)
 
-    @staticmethod
-    def _clean_text(text):
-        if text is None:
-            return None
-        if text.find("\n") > 0:
-            text = text.replace("\n", " ")
-        return text.strip()
-
-    @staticmethod
-    def _format_attributes(attributes):
+    def _format_attributes(self, attributes):
         if not len(attributes):
             return None, None
         text = "[ "
@@ -92,10 +76,18 @@ class XMLStandardItem(QStandardItem):
         for key in attributes:
             text = text + f"{key}=\"{attributes[key]}\""
             html = html + f"<i>{key}</i> = " \
-                          f"<b><span style='color:{XMLStandardItem._NODE_COLORS['attribute']};'>" \
+                          f"<b><span style='color:{self.colors['attribute']};'>" \
                           f"\"{attributes[key]}\"</span></b> "
 
         return text + " ]", html + " ]"
+
+    @staticmethod
+    def _clean_text(text):
+        if text is None:
+            return None
+        # if text.find("\n") > 0:
+        #     text = text.replace("\n", " ")
+        return text.strip()
 
 
 class XMLViewModel(QStandardItemModel):
@@ -132,6 +124,7 @@ class XMLViewModel(QStandardItemModel):
             self.etree = etree.ElementTree(xml)
             parse_end_time = datetime.datetime.now() - start_time
             app.logger.debug("Parsed XML, building tree")
+            AppSettings.add_to_recent(self.xml_file)
         except Exception as e:
             message = f"Error while loading file {str(e)}"
             self.xml_load_event.emit(message)
@@ -169,6 +162,7 @@ class XMLItemDelegate(QStyledItemDelegate):
         options = QStyleOptionViewItem()
         options.__init__(option)
         self.initStyleOption(options, index)
+        options.textElideMode = Qt.ElideRight
 
         painter.save()
 
@@ -211,7 +205,7 @@ class XMLTreeView(QTreeView):
     def __init__(self):
         super().__init__()
         self.model = XMLViewModel()
-        self.menu = XMLTreeViewContextMenu()
+        self.current_search = []
         self.init_ui()
 
     def init_ui(self):
@@ -219,20 +213,30 @@ class XMLTreeView(QTreeView):
         self.setDropIndicatorShown(True)
         self.setEditTriggers(QTreeView.NoEditTriggers)
         self.setSelectionBehavior(QTreeView.SelectRows)
-        self.setAlternatingRowColors(True)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.setWordWrap(True)
         self.setHeaderHidden(True)
-        self.customContextMenuRequested.connect(self.context_menu_requested)
         self.setItemDelegate(XMLItemDelegate(parent=self))
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        # with open(os.path.join(os.path.dirname(__file__), "../resources/tree.colortheme.css"), 'r') as file:
+        #     self.setStyleSheet(file.read())
+        _font = AppSettings.font()
+        if _font is not None:
+            self.setFont(_font)
 
     def set_file(self, file):
         if os.path.exists(file) and os.path.isfile(file):
+            app.logger.debug(f"Attempting to load {file}")
             self.model = XMLViewModel(file)
             self.model.xml_load_event.connect(self.model_xml_load_event)
             self.setModel(self.model)
+            self.current_search.clear()
         else:
             app.logger.debug(f"{file} is not a valid path")
+
+    def reload(self):
+        self.model.beginResetModel()
+        self.model.reload()
+        self.model.endResetModel()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -260,33 +264,45 @@ class XMLTreeView(QTreeView):
             self.model.get_xpath(item.node)
             self.path_changed_event.emit(self.model.get_xpath(item.node))
 
-    def context_menu_requested(self, point):
-        index = self.indexAt(point)
-        item = self.model.itemFromIndex(index)
-        if item is not None:
-            self.menu.exec_(self.mapToGlobal(point))
-
     def model_xml_load_event(self, message):
-        print(f"Error message = {message}")
         self.xml_load_event.emit(message)
 
     def search(self, criteria):
+        self.setUpdatesEnabled(False)
+        result_message = "0 results found"
+        # clear previous results:
+        for row in self.current_search:
+            row.highlight = False
+            row.emitDataChanged()
+
         app.logger.debug(f"Search for {criteria}")
-        xyz = self.model.findItems(criteria.text, criteria.options | Qt.MatchRecursive)
-        if len(xyz):
-            self.scrollTo(xyz[0].index())
+        self.selectionModel().clear()
+        self.current_search = self.model.findItems(criteria.text, criteria.options)
+        if len(self.current_search):
+            match_number = criteria.match_count % len(self.current_search)
+            match_index = self.current_search[match_number].index()
+            for row in self.current_search:
+                row.highlight = criteria.highlight
+                row.emitDataChanged()
+
+            self.selectionModel().select(match_index, QItemSelectionModel.ClearAndSelect)
+            self.scrollTo(match_index)
+            result_message = f"Showing result {match_number + 1} of {len(self.current_search)}"
+
+        self.setUpdatesEnabled(True)
+        return result_message
 
 
 class SearchCriteria:
-    def __init__(self, text, forward_search, highlight, options):
+    def __init__(self, text, match_count, highlight, options):
         super().__init__()
         self.text = text
-        self.forward_search = forward_search
+        self.match_count = match_count
         self.highlight = highlight
         self.options = options
 
     def __str__(self):
-        return f"text={self.text}\tforward={self.forward_search}\thighlight={self.highlight}"
+        return f"text={self.text}\tfind-item={self.match_count}\thighlight={self.highlight}"
 
 
 class XMLSearch(QDockWidget):
@@ -295,42 +311,38 @@ class XMLSearch(QDockWidget):
     def __init__(self):
         super().__init__()
         self.search_text = QLineEdit()
-        self.btn_prev = QPushButton("Previous") # First
         self.btn_next = QPushButton("Next")
-        # TODO self.exclude = QCheckBox("Exclude")
-        # TODO self.highlight = QCheckBox("Highlight")
+        self.highlight = QCheckBox("Highlight")
         self.match_case = QCheckBox("Match Case")
         self.match_option = QComboBox()
-        self.direction = "next"
+        self.match_count = 0
         self.init_ui()
 
     def init_ui(self):
         self.setWindowTitle("Search")
         self.search_text.setPlaceholderText("Find in document")
-        self.search_text.textChanged.connect(self.search_changed)
+        self.search_text.textChanged.connect(self.search_text_changed)
         self.btn_next.clicked.connect(self.next_button_press)
-        self.btn_prev.clicked.connect(self.back_button_press)
-        # self.highlight.stateChanged.connect(self.search_changed)
+        self.highlight.stateChanged.connect(self.search_changed)
         self.match_case.stateChanged.connect(self.search_changed)
         self.match_option.currentTextChanged.connect(self.search_changed)
         self.match_option.setEditable(False)
         self.match_option.addItems(_SEARCH_CRITERIA.keys())
         self.match_option.setCurrentText("Contains")
 
-        line2 = QHBoxLayout()
-        line2.addWidget(self.search_text)
-        line2.addWidget(self.btn_prev)
-        line2.addWidget(self.btn_next)
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(self.search_text)
+        search_layout.addWidget(self.btn_next)
 
-        line1 = QHBoxLayout()
-        line1.addWidget(self.match_option)
-        line1.addWidget(self.match_case)
-        # line2.addWidget(self.highlight)
-        line1.addStretch(1)
+        options_layout = QHBoxLayout()
+        options_layout.addWidget(self.match_option)
+        options_layout.addWidget(self.match_case)
+        options_layout.addWidget(self.highlight)
+        options_layout.addStretch(1)
 
         layout = QVBoxLayout()
-        layout.addLayout(line1)
-        layout.addLayout(line2)
+        layout.addLayout(options_layout)
+        layout.addLayout(search_layout)
 
         container = QGroupBox()
         container.setLayout(layout)
@@ -338,26 +350,30 @@ class XMLSearch(QDockWidget):
         self.setWidget(container)
 
     def search_changed(self):
-
+        # Set match options
         match_options = _SEARCH_CRITERIA[self.match_option.currentText()]
         if self.match_case.isChecked():
             match_options = match_options | Qt.MatchCaseSensitive
+        # Always recursive and wrapped
+        # TODO: Remove recirsive search
+        match_options = match_options | Qt.MatchRecursive | Qt.MatchWrap
 
         search_criteria = SearchCriteria(
             text=self.search_text.text().strip(),
-            forward_search=self.direction == "next",
-            highlight=False,  # self.highlight.isChecked(),
+            match_count=self.match_count,
+            highlight=self.highlight.isChecked(),
             options=match_options
         )
         if search_criteria.text != "":
             self.search_change_event.emit(search_criteria)
 
-    def back_button_press(self):
-        self.direction = "back"
+    def search_text_changed(self):
+        self.match_count = 0
         self.search_changed()
 
     def next_button_press(self):
-        self.direction = "next"
+        # Find next match
+        self.match_count += 1
         self.search_changed()
 
 

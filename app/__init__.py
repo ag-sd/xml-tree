@@ -20,6 +20,6 @@ def _get_logger(app_name):
 
 __VERSION__ = "0.1.0"
 __NAME__ = "XML Tree"
-__APP_NAME__ = str.format(f"{__NAME__}")
+__APP_NAME__ = str.format(f"{__NAME__}:{__VERSION__}")
 
 logger = _get_logger(__APP_NAME__)
