@@ -15,7 +15,7 @@ A tree viewer for XML documents
 - [x] Menu Expand
 - [ ] ~~Menu Expand Selected~~
 - [x] Menu Toggle Attributes
-- [ ] Menu Option Font
+- [x] Menu Option Font
 - [x] Context Menu Expand
 - [x] Context Menu Collapse
 - [ ] ~~Context Menu Expand All children~~
@@ -23,7 +23,8 @@ A tree viewer for XML documents
 - [x] Context Menu Reload Tree
 - [ ] ~~Context Menu Expand All~~
 - [ ] ~~Context Menu Expand Selected~~
-- [ ] Find by XPath
+- [ ] Show Namespace  
+- [ ] Find by XPath (Create a map of node to tree view item. Find Node, lookup item)
 - [ ] Convert to JSON
 
 ## Bugs

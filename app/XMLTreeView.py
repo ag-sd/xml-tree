@@ -1,10 +1,12 @@
+import cgi
 import datetime
+import html
 import os
 import sys
 import typing
 
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize, QItemSelectionModel, QVariant
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QTextDocument, QColor
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QTextDocument, QColor, QPalette
 from PyQt5.QtWidgets import QTreeView, QApplication, QDockWidget, QLineEdit, QPushButton, QCheckBox, QHBoxLayout, \
     QVBoxLayout, QGroupBox, QComboBox, QStyledItemDelegate, QStyleOptionViewItem, QStyle, QAbstractItemView
 from lxml import etree
@@ -64,8 +66,10 @@ class XMLStandardItem(QStandardItem):
             if attr_text:
                 text = text.replace("</p>", f"  {attr_text}</p>")
                 html = html.replace("</p>", f"  {attr_html}</p>")
+        html = html.replace('\n', "<br>")
         self.html_text = html
         self.setText(text)
+        print(f"text={text} -> html={html}")
 
     def _format_attributes(self, attributes):
         if not len(attributes):
@@ -74,7 +78,7 @@ class XMLStandardItem(QStandardItem):
         html = "[ "
 
         for key in attributes:
-            text = text + f"{key}=\"{attributes[key]}\""
+            text = text + f"{self._clean_text(key)}=\"{self._clean_text(attributes[key])}\""
             html = html + f"<i>{key}</i> = " \
                           f"<b><span style='color:{self.colors['attribute']};'>" \
                           f"\"{attributes[key]}\"</span></b> "
@@ -85,8 +89,7 @@ class XMLStandardItem(QStandardItem):
     def _clean_text(text):
         if text is None:
             return None
-        # if text.find("\n") > 0:
-        #     text = text.replace("\n", " ")
+        text = html.escape(text)
         return text.strip()
 
 
@@ -157,8 +160,6 @@ class XMLItemDelegate(QStyledItemDelegate):
         self.parent = parent
 
     def paint(self, painter, option, index):
-        item = self.parent.model.itemFromIndex(index)
-
         options = QStyleOptionViewItem()
         options.__init__(option)
         self.initStyleOption(options, index)
@@ -166,8 +167,7 @@ class XMLItemDelegate(QStyledItemDelegate):
 
         painter.save()
 
-        doc = QTextDocument()
-        doc.setHtml(item.html_text)
+        doc = self._get_document(index)
 
         # get focus rect and selection background
         options.text = ""
@@ -190,12 +190,18 @@ class XMLItemDelegate(QStyledItemDelegate):
         options.__init__(option)
         self.initStyleOption(options, index)
 
-        doc = QTextDocument()
-        doc.setHtml(options.text)
+        doc = self._get_document(index)
         doc.setTextWidth(options.rect.width())
         size = QSize()
         size.__init__(doc.idealWidth(), doc.size().height())
         return size
+
+    def _get_document(self, index):
+        item = self.parent.model.itemFromIndex(index)
+        doc = QTextDocument()
+        doc.setDefaultFont(self.parent.font())
+        doc.setHtml(item.html_text)
+        return doc
 
 
 class XMLTreeView(QTreeView):
@@ -375,20 +381,3 @@ class XMLSearch(QDockWidget):
         # Find next match
         self.match_count += 1
         self.search_changed()
-
-
-
-def main():
-    app = QApplication(sys.argv)
-    ex = XMLSearch()
-    #ex.set_file("/mnt/Dev/test/nasa.xml")
-    ex.show()
-    sys.exit(app.exec_())
-
-    # model = XMLViewModel()
-    # model.set_xml_file("/mnt/Dev/test/nasa.xml")
-    # model.reload()
-
-
-if __name__ == '__main__':
-    main()

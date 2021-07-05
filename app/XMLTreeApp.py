@@ -40,7 +40,6 @@ class XMLTreeApp(QMainWindow):
         self.setWindowTitle(app.__APP_NAME__)
         self.setWindowIcon(QIcon.fromTheme("text-x-generic-template"))
 
-        self.XML_tree.set_file("/mnt/Dev/test/REC-xml-20081126.xml")
         self.show()
 
     def path_changed_event(self, path):
@@ -57,7 +56,8 @@ class XMLTreeApp(QMainWindow):
     def menu_event(self, menu_action, argument):
         def load_file(_file):
             self.XML_tree.set_file(_file)
-            self.setWindowTitle(f"{app.__APP_NAME__} : {os.path.basename(_file)}")
+            self.timed_message_event("Attempting to lad file. Please wait")
+            self.setWindowTitle(f"{app.__APP_NAME__} - {os.path.basename(_file)}")
 
         if menu_action == MenuAction.OPEN:
             file, _ = QFileDialog.getOpenFileUrl(caption="Select an XML File",
@@ -95,8 +95,7 @@ class XMLTreeApp(QMainWindow):
             _font, ok = QFontDialog.getFont(self.XML_tree.font(), self, "Select Font")
             if ok:
                 self.XML_tree.setFont(_font)
-                # TODO: Make this saveable
-                # AppSettings.set_font(self.XML_tree.font())
+                AppSettings.set_font(self.XML_tree.font())
                 self.XML_tree.reload()
         elif menu_action == MenuAction.COLOR:
             theme = AppSettings.color_theme()

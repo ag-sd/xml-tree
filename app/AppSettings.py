@@ -3,6 +3,7 @@ from collections import deque
 from enum import unique, Enum
 
 from PyQt5.QtCore import QObject, pyqtSignal, QSettings
+from PyQt5.QtGui import QFont
 
 import app
 
@@ -77,14 +78,16 @@ def get_recent_files():
 
 
 def font():
-    pickled = _settings.get_setting(SettingsKeys.font, None)
-    if pickled:
-        return pickle.loads(pickled)
+    font_string = _settings.get_setting(SettingsKeys.font, None)
+    if font_string:
+        _font = QFont()
+        if _font.fromString(font_string):
+            return _font
+    return None
 
 
 def set_font(_font):
-    pickled = pickle.dumps(_font)
-    _settings.apply_setting(SettingsKeys.font, pickled)
+    _settings.apply_setting(SettingsKeys.font, _font.toString())
 
 
 def color_theme():
