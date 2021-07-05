@@ -44,17 +44,19 @@ class XMLStandardItem(QStandardItem):
 
     def _create_display_texts(self):
         if len(self.node):
+            self.node.tag = etree.QName(self.node).localname
             text = self._clean_text(self.node.tag)
-            html = f"<p><span style='color:{self.colors['node']};'>{text}</span></p>"
+            _html = f"<p><span style='color:{self.colors['node']};'>{text}</span></p>"
             self.setIcon(self.__ROOT_ICON)
         elif self.node.tag is etree.Comment:
             text = self._clean_text(f"#  {self.node.text}")
-            html = f"<i style='color:{self.colors['comment']};'>{text}</i>"
+            _html = f"<i style='color:{self.colors['comment']};'>{text}</i>"
         else:
+            self.node.tag = etree.QName(self.node).localname
             key = self._clean_text(self.node.tag)
             value = self._clean_text(self.node.text)
             text = f"{key} = {value}"
-            html = f"<p>" \
+            _html = f"<p>" \
                    f"<span style='color:{self.colors['key']};'>{key}</span>" \
                    f" = " \
                    f"<span style='color:{self.colors['value']};'>{value}</span>" \
@@ -65,11 +67,10 @@ class XMLStandardItem(QStandardItem):
             attr_text, attr_html = self._format_attributes(self.node.attrib)
             if attr_text:
                 text = text.replace("</p>", f"  {attr_text}</p>")
-                html = html.replace("</p>", f"  {attr_html}</p>")
-        html = html.replace('\n', "<br>")
-        self.html_text = html
+                _html = _html.replace("</p>", f"  {attr_html}</p>")
+        _html = _html.replace('\n', "<br>")
+        self.html_text = _html
         self.setText(text)
-        print(f"text={text} -> html={html}")
 
     def _format_attributes(self, attributes):
         if not len(attributes):
@@ -136,6 +137,7 @@ class XMLViewModel(QStandardItemModel):
 
         self.clear()
         self._build_tree(self.etree, self.invisibleRootItem(), xml)
+        etree.cleanup_namespaces(xml)
         app.logger.debug("Tree built")
         total_time = datetime.datetime.now() - start_time
         self.xml_load_event.emit(f"File Loaded in {total_time.total_seconds()} seconds. "

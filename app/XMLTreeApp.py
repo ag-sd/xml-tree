@@ -56,7 +56,7 @@ class XMLTreeApp(QMainWindow):
     def menu_event(self, menu_action, argument):
         def load_file(_file):
             self.XML_tree.set_file(_file)
-            self.timed_message_event("Attempting to lad file. Please wait")
+            self.timed_message_event("Attempting to load file. Please wait")
             self.setWindowTitle(f"{app.__APP_NAME__} - {os.path.basename(_file)}")
 
         if menu_action == MenuAction.OPEN:
