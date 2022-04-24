@@ -1,31 +1,30 @@
 import os.path
+import os.path
 import sys
-from datetime import datetime
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon, QColor
-from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QLabel, QMessageBox, QFontDialog, QColorDialog
+from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtWidgets import QApplication, QMainWindow
 
 import app
 from app import AppSettings
-from app.XMLTreeView import XMLTreeView, XMLSearch
-from app.Menu import MenuBar, MenuAction, XMLTreeViewContextMenu
+from app.AppSettings import SettingsKeys
+from app.Menu import MenuAction, XMLTreeViewContextMenu, MenuHandler
+from app.XMLTreeView import XMLTreeView
 
 
 class XMLTreeApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.XML_tree = XMLTreeView()
-        self.XML_search = XMLSearch()
         self.context_menu = XMLTreeViewContextMenu()
+        self.menu_handler = MenuHandler(self, self.XML_tree)
         self.init_ui()
 
     def init_ui(self):
-        menubar = MenuBar()
-        menubar.menu_event.connect(self.menu_event)
-        self.setMenuBar(menubar)
-
-        self.context_menu.menu_event.connect(self.menu_event)
+        self.menu_handler.load_file_event.connect(self.load_file_event)
+        self.setMenuBar(self.menu_handler.menubar)
+        AppSettings.settings.settings_change_event.connect(self.settings_change_event)
 
         self.XML_tree.path_changed_event.connect(self.path_changed_event)
         self.XML_tree.xml_load_event.connect(self.timed_message_event)
@@ -33,10 +32,7 @@ class XMLTreeApp(QMainWindow):
         self.XML_tree.customContextMenuRequested.connect(self.context_menu_requested)
         self.setCentralWidget(self.XML_tree)
 
-        self.XML_search.search_change_event.connect(self.search_criteria_change_event)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.XML_search)
-
-        self.setMinimumSize(800, 1024)
+        self.setMinimumSize(640, 480)
         self.setWindowTitle(app.__APP_NAME__)
         self.setWindowIcon(QIcon.fromTheme("text-x-generic-template"))
 
@@ -53,81 +49,62 @@ class XMLTreeApp(QMainWindow):
         app.logger.debug(search_message)
         self.timed_message_event(search_message)
 
+    def load_file_event(self, _file):
+        self.XML_tree.set_file(_file)
+        self.timed_message_event("Attempting to load file. Please wait")
+        self.setWindowTitle(f"{app.__APP_NAME__} - {os.path.basename(_file)}")
+
+    def settings_change_event(self, setting, value):
+        match setting:
+            case SettingsKeys.toggle_attributes | SettingsKeys.syntax_highlighting:
+                self.XML_tree.reload()
+            case SettingsKeys.font:
+                _font = QFont()
+                if _font.fromString(value):
+                    self.XML_tree.setFont(_font)
+                    self.XML_tree.reload()
+
     def menu_event(self, menu_action, argument):
-        def load_file(_file):
-            self.XML_tree.set_file(_file)
-            self.timed_message_event("Attempting to load file. Please wait")
-            self.setWindowTitle(f"{app.__APP_NAME__} - {os.path.basename(_file)}")
-
-        if menu_action == MenuAction.OPEN:
-            file, _ = QFileDialog.getOpenFileUrl(caption="Select an XML File",
-                                                 filter='Extensible Markup Language (XML) file(*.xml)')
-            if not file.isEmpty():
-                load_file(file.toLocalFile())
-        if menu_action == MenuAction.RECENT:
-            load_file(argument)
-
-        elif menu_action == MenuAction.SEARCH:
+        if menu_action == MenuAction.SEARCH:
             if self.XML_search.isVisible():
                 self.XML_search.hide()
             else:
                 self.XML_search.show()
-        elif menu_action == MenuAction.EXPAND:
-            selected = self.XML_tree.selectedIndexes()
-            if len(selected):
-                self.XML_tree.expandRecursively(selected[0], depth=-1)
-            else:
-                self.timed_message_event("Nothing selected to expand!")
-        elif menu_action == MenuAction.COLLAPSE:
-            selected = self.XML_tree.selectedIndexes()
-            if len(selected):
-                self.XML_tree.collapse(selected[0])
-            else:
-                self.timed_message_event("Nothing selected to collapse!")
-        elif menu_action == MenuAction.TOP:
-            self.XML_tree.scrollToTop()
-        elif menu_action == MenuAction.BOTTOM:
-            self.XML_tree.scrollToBottom()
-        elif menu_action == MenuAction.ATTRIBUTES:
-            AppSettings.set_show_attributes(not AppSettings.show_attributes())
-            self.XML_tree.reload()
-        elif menu_action == MenuAction.FONT:
-            _font, ok = QFontDialog.getFont(self.XML_tree.font(), self, "Select Font")
-            if ok:
-                self.XML_tree.setFont(_font)
-                AppSettings.set_font(self.XML_tree.font())
-                self.XML_tree.reload()
-        elif menu_action == MenuAction.COLOR:
-            theme = AppSettings.color_theme()
-            current = theme[argument]
-            _color = QColorDialog.getColor(initial=QColor(current), parent=self,
-                                           title=f"Select color for {argument.title()}",
-                                           options=QColorDialog.ShowAlphaChannel)
-            if _color.isValid():
-                theme[argument] = _color.name()
-                AppSettings.set_color_theme(theme)
-                self.XML_tree.reload()
-
         elif menu_action == MenuAction.HIDE:
-            selected = self.XML_tree.selectedIndexes()
-            for item in selected:
+            sorted_to_delete = self._get_models_sorted_by_ancestry(self.XML_tree.selectedIndexes())
+            for item in sorted_to_delete:
                 self.XML_tree.model.removeRow(item.row(), item.parent())
-        elif menu_action == MenuAction.RELOAD:
-            self.XML_tree.reload()
-        elif menu_action == MenuAction.EXIT:
-            self.close()
-        elif menu_action == MenuAction.ABOUT:
-            with open(os.path.join(os.path.dirname(__file__), "../resources/about.html"), 'r') as file:
-                about_html = file.read()
-            QMessageBox.about(self, app.__APP_NAME__, about_html.format(APP_NAME=app.__APP_NAME__,
-                                                                        VERSION=app.__VERSION__,
-                                                                        YEAR=datetime.now().year))
 
     def context_menu_requested(self, point):
         index = self.XML_tree.indexAt(point)
         item = self.XML_tree.model.itemFromIndex(index)
         if item is not None:
-            self.context_menu.exec_(self.XML_tree.mapToGlobal(point))
+            self.menu_handler.menucontext.exec_(self.XML_tree.mapToGlobal(point))
+
+    @staticmethod
+    def _get_models_sorted_by_ancestry(model_indices):
+        ancestries = []
+        max_len = 0
+        # For each selection
+        for item in model_indices:
+            ancestry = []
+            tmp = item
+            # Create its path
+            while tmp.parent().row() >= 0:
+                ancestry.insert(0, tmp.row())
+                tmp = tmp.parent()
+            # And pad it with zeros
+            if len(ancestry) > max_len:
+                max_len = len(ancestry)
+            ancestries.append((item, ancestry))
+        # And pad it with zeros
+        for i in range(0, len(ancestries)):
+            ancestries[i] = (ancestries[i][0], ancestries[i][1] + [0] * (max_len - len(ancestries[i][1])))
+        # Sort these in reverse order
+        for i in range(max_len - 1, -1, -1):
+            ancestries.sort(key=lambda x: x[1][i], reverse=True)
+
+        return [element[0] for element in ancestries]
 
 
 def main():
