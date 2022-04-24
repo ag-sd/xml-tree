@@ -59,26 +59,26 @@ __DEFAULT_COLOR_THEME = {
     "highlight": "#ffff00"
 }
 
-_settings = Settings(
+settings = Settings(
     app.__APP_NAME__,
     {}
 )
 
 
 def show_attributes():
-    return _settings.get_setting(SettingsKeys.toggle_attributes, True)
+    return settings.get_setting(SettingsKeys.toggle_attributes, True)
 
 
 def set_show_attributes(value):
-    _settings.apply_setting(SettingsKeys.toggle_attributes, value)
+    settings.apply_setting(SettingsKeys.toggle_attributes, value)
 
 
 def get_recent_files():
-    return _settings.get_setting(SettingsKeys.recent_documents)
+    return settings.get_setting(SettingsKeys.recent_documents)
 
 
 def font():
-    font_string = _settings.get_setting(SettingsKeys.font, None)
+    font_string = settings.get_setting(SettingsKeys.font, None)
     if font_string:
         _font = QFont()
         if _font.fromString(font_string):
@@ -87,11 +87,11 @@ def font():
 
 
 def set_font(_font):
-    _settings.apply_setting(SettingsKeys.font, _font.toString())
+    settings.apply_setting(SettingsKeys.font, _font.toString())
 
 
 def color_theme():
-    pickled = _settings.get_setting(SettingsKeys.syntax_highlighting)
+    pickled = settings.get_setting(SettingsKeys.syntax_highlighting)
     if pickled:
         return pickle.loads(pickled)
     else:
@@ -99,18 +99,24 @@ def color_theme():
 
 
 def set_color_theme(theme):
-    _settings.apply_setting(SettingsKeys.syntax_highlighting, pickle.dumps(theme))
+    settings.apply_setting(SettingsKeys.syntax_highlighting, pickle.dumps(theme))
 
 
 def add_to_recent(file):
-    recent_files = _settings.get_setting(SettingsKeys.recent_documents, deque([]))
-    max_recent_files = _settings.get_setting(SettingsKeys.max_recent, 10)
+    recent_files = settings.get_setting(SettingsKeys.recent_documents, deque([]))
+    max_recent_files = settings.get_setting(SettingsKeys.max_recent, 10)
     # Move the current file to the bottom
+    remove_from_recent(file)
+    recent_files.append(file)
+    while len(recent_files) > max_recent_files:
+        recent_files.popleft()
+    settings.apply_setting(SettingsKeys.recent_documents, recent_files)
+
+
+def remove_from_recent(file):
+    recent_files = settings.get_setting(SettingsKeys.recent_documents, deque([]))
     try:
         recent_files.remove(file)
     except ValueError:
         pass
-    recent_files.append(file)
-    while len(recent_files) > max_recent_files:
-        recent_files.popleft()
-    _settings.apply_setting(SettingsKeys.recent_documents, recent_files)
+
