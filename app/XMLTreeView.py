@@ -1,157 +1,142 @@
-import cgi
 import datetime
 import html
+import json
 import os
 import sys
-import typing
+from enum import Enum
 
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QSize, QItemSelectionModel, QVariant
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QTextDocument, QColor, QPalette
-from PyQt5.QtWidgets import QTreeView, QApplication, QDockWidget, QLineEdit, QPushButton, QCheckBox, QHBoxLayout, \
-    QVBoxLayout, QGroupBox, QComboBox, QStyledItemDelegate, QStyleOptionViewItem, QStyle, QAbstractItemView
+import xmltodict
+from PyQt5.QtCore import Qt, pyqtSignal, QItemSelectionModel, QModelIndex, QRectF, QSize, QSizeF
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QTextDocument
+from PyQt5.QtWidgets import QTreeView, QAbstractItemView, \
+    QApplication, QStyledItemDelegate, QStyleOptionViewItem, QStyle
 from lxml import etree
 
 import app
 from app import AppSettings
 
-_SEARCH_CRITERIA = {
-        "Contains": Qt.MatchContains,
-        "Exact Match": Qt.MatchFixedString,
-        "Starts With": Qt.MatchStartsWith,
-        "Ends With": Qt.MatchEndsWith,
-        "Regular Expression": Qt.MatchRegularExpression,
-        "Wild Card": Qt.MatchWildcard
-    }
+
+class ItemType(Enum):
+    NODE = 1,
+    DICT = 2,
+    LIST = 3
 
 
-class XMLStandardItem(QStandardItem):
+class XMLDictStandardItem(QStandardItem):
     __ROOT_ICON = QIcon.fromTheme("folder")
     __NODE_ICON = QIcon.fromTheme("text-x-generic")
+    __LIST_ICON = QIcon.fromTheme("x-office-spreadsheet")
 
-    def __init__(self, node):
+    __TEXT_NODE = "#text"
+
+    def __init__(self, name, data):
         super().__init__()
-        self.node = node
-        self.display_text = None
-        self.html_text = None
-        self.highlight = False
         self.colors = AppSettings.color_theme()
+        self.name = self._clean_text(name)
+        self.attributes = {}
+        self.datadict = {}
+        self.datalist = []
+        self.datatext = None
+        self.htmltext = None
+
+        if isinstance(data, dict):
+            self.attributes, self.datadict = self._extract_attrs(data)
+            # there can be only attributes in the dict
+            if len(self.datadict) == 1 and self.__TEXT_NODE in self.datadict:
+                self.datatext = self.datadict[self.__TEXT_NODE]
+                self.datadict.pop(self.__TEXT_NODE)
+                self.nodetype = ItemType.NODE
+            else:
+                self.nodetype = ItemType.DICT
+        elif isinstance(data, list):
+            self.datalist = data
+            self.nodetype = ItemType.LIST
+        elif isinstance(data, str):
+            self.datatext = self._clean_text(data)
+            self.nodetype = ItemType.NODE
+        else:
+            raise TypeError(f"data has an unexpected type of {type(data)}")
         self._create_display_texts()
 
-    def data(self, role: int = Qt.UserRole + 1) -> typing.Any:
-        if role == Qt.BackgroundColorRole and self.highlight:
-            return QVariant(QColor(self.colors["highlight"]))
-        return QStandardItem.data(self, role)
-
     def _create_display_texts(self):
-        if len(self.node):
-            self.node.tag = etree.QName(self.node).localname
-            text = self._clean_text(self.node.tag)
-            _html = f"<p><span style='color:{self.colors['node']};'>{text}</span></p>"
+        if self.nodetype == ItemType.DICT:
+            # It's a root
             self.setIcon(self.__ROOT_ICON)
-        elif self.node.tag is etree.Comment:
-            text = self._clean_text(f"#  {self.node.text}")
-            _html = f"<i style='color:{self.colors['comment']};'>{text}</i>"
+            plaintext = self.name
+            self.htmltext = f"<p><span style='color:{self.colors['node']};'>{self.name}</span></p>"
+        elif self.nodetype == ItemType.LIST:
+            # It's a list
+            self.setIcon(self.__LIST_ICON)
+            plaintext = f"{self.name} (list of {len(self.datalist)} elements)"
+            self.htmltext = f"<p>" \
+                            f"  <span style='color:{self.colors['node']};'>{self.name}</span>" \
+                            f"  <span style='color:{self.colors['comment']};'>" \
+                            f"      <em>...list with {len(self.datalist)} item(s)</em>" \
+                            f"  </span>" \
+                            f"</p>"
         else:
-            self.node.tag = etree.QName(self.node).localname
-            key = self._clean_text(self.node.tag)
-            value = self._clean_text(self.node.text)
-            text = f"{key} = {value}"
-            _html = f"<p>" \
-                   f"<span style='color:{self.colors['key']};'>{key}</span>" \
-                   f" = " \
-                   f"<span style='color:{self.colors['value']};'>{value}</span>" \
-                   f"</p>"
             self.setIcon(self.__NODE_ICON)
+            plaintext = f"{self.name} = {self.datatext}"
+            self.htmltext = f"<p>" \
+                            f"<span style='color:{self.colors['key']};'>{self.name}</span>" \
+                            f" = " \
+                            f"<span style='color:{self.colors['value']};'>{self.datatext}</span>" \
+                            f"</p>"
 
-        if AppSettings.show_attributes():
-            attr_text, attr_html = self._format_attributes(self.node.attrib)
-            if attr_text:
-                text = text.replace("</p>", f"  {attr_text}</p>")
-                _html = _html.replace("</p>", f"  {attr_html}</p>")
-        _html = _html.replace('\n', "<br>")
-        self.html_text = _html
-        self.setText(text)
+        if AppSettings.show_attributes() and len(self.attributes) > 0:
+            attr_text, attr_html = self._format_attributes()
+            plaintext = plaintext.replace("</p>", f"  {attr_text}</p>")
+            self.htmltext = self.htmltext.replace("</p>", f"  {attr_html}</p>")
 
-    def _format_attributes(self, attributes):
-        if not len(attributes):
-            return None, None
-        text = "[ "
-        html = "[ "
+        self.htmltext = self.htmltext.replace('\n', "<br/>")
+        self.setText(plaintext)
+            
+    def _format_attributes(self):
+        """
+        Pretty prints attributes and returns a list of these in plaintext and html formats
+        :return: 
+        """
+        _text = "[ "
+        _html = "[ "
 
-        for key in attributes:
-            text = text + f"{self._clean_text(key)}=\"{self._clean_text(attributes[key])}\""
-            html = html + f"<i>{key}</i> = " \
-                          f"<b><span style='color:{self.colors['attribute']};'>" \
-                          f"\"{attributes[key]}\"</span></b> "
-
-        return text + " ]", html + " ]"
+        for key in self.attributes:
+            _text = _text + f"{self._clean_text(key)}=\"{self._clean_text(self.attributes[key])}\""
+            _html = _html + f"<i>{key} = " \
+                            f"<span style='color:{self.colors['attribute']};'>" \
+                            f"\"{self.attributes[key]}\"</span></i> "
+        return _text + " ]", _html + " ]"
 
     @staticmethod
     def _clean_text(text):
+        """
+        Cleans the input data and html escapes it
+        :param text: 
+        :return: 
+        """
         if text is None:
             return None
         text = html.escape(text)
         return text.strip()
 
-
-class XMLViewModel(QStandardItemModel):
-
-    xml_load_event = pyqtSignal(str)
-
-    def __init__(self, xml_file=None):
-        super().__init__()
-        self.xml_file = xml_file
-        self.etree = None
-
-        if xml_file:
-            self.reload()
-
-    def set_xml_file(self, xml_file):
-        self.xml_file = xml_file
-
-    def reload(self):
-        start_time = datetime.datetime.now()
-        try:
-            app.logger.debug("Starting load")
-            _, ext = os.path.splitext(self.xml_file)
-            if ext.upper().startswith(".HTM"):
-                app.logger.debug("This is an HTML file")
-                parser = etree.HTMLParser()
-            elif ext.upper() == ".XML":
-                app.logger.debug("This is an HTML file")
-                parser = etree.XMLParser()
-            else:
-                app.logger.debug("This is an Unsupported file. It cannot be loaded")
-                raise Exception("This is an unsupported file. Only HTML and XML files permitted")
-
-            xml = etree.parse(self.xml_file, parser=parser).getroot()
-            self.etree = etree.ElementTree(xml)
-            parse_end_time = datetime.datetime.now() - start_time
-            app.logger.debug("Parsed XML, building tree")
-            AppSettings.add_to_recent(self.xml_file)
-        except Exception as e:
-            message = f"Error while loading file {str(e)}"
-            self.xml_load_event.emit(message)
-            app.logger.error(message)
-            return
-
-        self.clear()
-        self._build_tree(self.etree, self.invisibleRootItem(), xml)
-        etree.cleanup_namespaces(xml)
-        app.logger.debug("Tree built")
-        total_time = datetime.datetime.now() - start_time
-        self.xml_load_event.emit(f"File Loaded in {total_time.total_seconds()} seconds. "
-                                 f"(Took {parse_end_time.total_seconds()} seconds to parse)")
-
-    def get_xpath(self, xml_node):
-        return self.etree.getpath(xml_node)
-
     @staticmethod
-    def _build_tree(tree, parent_item, current_xml_node):
-        section_root = XMLStandardItem(current_xml_node)
-        parent_item.appendRow(section_root)
-        for child in current_xml_node:
-            XMLViewModel._build_tree(tree, section_root, child)
+    def _extract_attrs(datadict):
+        """
+        Extracts the attributes from the datadict and returns a dictionary of attributes and the updated datadict
+        :param datadict:
+        :return:
+        """
+
+        attributes = {}
+        # Collect attributes
+        for key in datadict:
+            if key.startswith("@"):
+                attributes[key[1:]] = datadict[key]
+
+        # Remove attributes from data dict
+        for key in attributes:
+            datadict.pop(f"@{key}")
+
+        return attributes, datadict
 
 
 class XMLItemDelegate(QStyledItemDelegate):
@@ -160,6 +145,7 @@ class XMLItemDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
+        self.font = AppSettings.font()
 
     def paint(self, painter, option, index):
         options = QStyleOptionViewItem()
@@ -181,8 +167,8 @@ class XMLItemDelegate(QStyledItemDelegate):
             painter.translate(options.rect.left(), options.rect.top())
         else:
             painter.translate(options.rect.left() + option.decorationSize.width(), options.rect.top())
-        rect = QRectF()
-        rect.__init__(0, 0, options.rect.width(), options.rect.height())
+        rect = QRectF(0, 0, options.rect.width(), options.rect.height())
+        # rect.__init__(0, 0, options.rect.width(), options.rect.height())
         doc.drawContents(painter, rect)
 
         painter.restore()
@@ -192,18 +178,131 @@ class XMLItemDelegate(QStyledItemDelegate):
         options.__init__(option)
         self.initStyleOption(options, index)
 
-        doc = self._get_document(index)
+        doc = QTextDocument()
+        doc.setDefaultFont(self.font)
+        doc.setHtml(options.text)
         doc.setTextWidth(options.rect.width())
-        size = QSize()
-        size.__init__(doc.idealWidth(), doc.size().height())
-        return size
+        size = QSizeF(doc.idealWidth(), doc.size().height())
+        return size.toSize()
 
     def _get_document(self, index):
         item = self.parent.model.itemFromIndex(index)
         doc = QTextDocument()
-        doc.setDefaultFont(self.parent.font())
-        doc.setHtml(item.html_text)
+        doc.setDefaultFont(self.font)
+        doc.setHtml(item.htmltext)
         return doc
+
+
+class XMLViewModel(QStandardItemModel):
+
+    load_event = pyqtSignal(str)
+
+    def __init__(self, xml_file=None):
+        super().__init__()
+        self.data_file = xml_file
+
+        if xml_file:
+            self.reload()
+
+    def set_xml_file(self, xml_file):
+        self.data_file = xml_file
+
+    def reload(self):
+        start_time = datetime.datetime.now()
+        data_dict = {}
+        parser = None
+        if not self.data_file:
+            return
+        # TODO CLean this code up
+        # try:
+        app.logger.debug("Starting load")
+        _, ext = os.path.splitext(self.data_file)
+
+        if ext.upper().startswith(".HTM"):
+            app.logger.debug("This is an HTML file")
+            parser = etree.HTMLParser()
+        elif ext.upper() == ".XML":
+            app.logger.debug("This is an XML file")
+            parser = etree.XMLParser()
+        elif ext.upper() == ".JSON":
+            app. logger.debug("This is a JSON file")
+            with open(self.data_file, "r") as f:
+                data_dict = json.load(f)
+            parser = None
+        else:
+            app.logger.debug("This is an Unsupported file. It cannot be loaded")
+            raise Exception("This is an unsupported file. Only HTML, XML and JSON files permitted")
+
+        if parser:
+            app.logger.debug("in If parser")
+            xml = etree.parse(self.data_file, parser=parser).getroot()
+            data_dict = xmltodict.parse(etree.tostring(xml))
+
+        parse_end_time = datetime.datetime.now() - start_time
+        app.logger.debug("Parsed XML, building tree")
+        # except Exception as e:
+        #     message = f"Error while loading file {str(e)}"
+        #     self.load_event.emit(message)
+        #     app.logger.error(message)
+        #     return
+
+        self.clear()
+        items = []
+        for key in data_dict:
+            items.append(XMLDictStandardItem(key, data_dict[key]))
+        self.invisibleRootItem().appendRows(items)
+        app.logger.debug("Tree built")
+        total_time = datetime.datetime.now() - start_time
+        log = f"File Loaded in {total_time.total_seconds()} seconds. " \
+              f"(Took {parse_end_time.total_seconds()} seconds to parse)"
+        app.logger.debug(log)
+
+        self.load_event.emit(log)
+
+    def canFetchMore(self, parent: QModelIndex):
+        item = self.itemFromIndex(parent)
+        if item is not None:
+            # If it already has children or does not have children at all, return false
+            return not (item.hasChildren() or (len(item.datadict) == 0 and len(item.datalist) == 0))
+        else:
+            return super().rowCount(parent)
+
+    def fetchMore(self, parent: QModelIndex):
+        item = self.itemFromIndex(parent)
+        if item is not None:
+            rows = []
+            if item.nodetype == ItemType.DICT:
+                for child in item.datadict:
+                    rows.append(XMLDictStandardItem(child, item.datadict[child]))
+            elif item.nodetype == ItemType.LIST:
+                for index, element in enumerate(item.datalist):
+                    rows.append(XMLDictStandardItem(item.name, element))
+            else:
+                app.logger.warn("This case shouldnt occur! Test expansion functions!!")
+            app.logger.debug(f"Adding {len(rows)} child(ren) to {item.text()}")
+            self.beginInsertRows(parent, 0, len(rows))
+            item.insertRows(0, rows)
+            self.endInsertRows()
+        else:
+            super().fetchMore(parent)
+
+    def hasChildren(self, parent):
+        item = self.itemFromIndex(parent)
+        if item is not None:
+            return item.hasChildren() or len(item.datadict) > 0 or len(item.datalist) > 0
+        else:
+            return super().rowCount(parent)
+
+    def rowCount(self, parent):
+        item = self.itemFromIndex(parent)
+        if item is not None:
+            if item.hasChildren():
+                return item.rowCount()
+            else:
+                app.logger.debug(f"Visit node for the first time")
+                return 0
+        else:
+            return super().rowCount(parent)
 
 
 class XMLTreeView(QTreeView):
@@ -235,7 +334,7 @@ class XMLTreeView(QTreeView):
         if os.path.exists(file) and os.path.isfile(file):
             app.logger.debug(f"Attempting to load {file}")
             self.model = XMLViewModel(file)
-            self.model.xml_load_event.connect(self.model_xml_load_event)
+            self.model.load_event.connect(self.model_xml_load_event)
             self.setModel(self.model)
             self.current_search.clear()
         else:
@@ -267,10 +366,12 @@ class XMLTreeView(QTreeView):
             event.ignore()
 
     def currentChanged(self, current, _):
-        item = self.model.itemFromIndex(current)
-        if item is not None:
-            self.model.get_xpath(item.node)
-            self.path_changed_event.emit(self.model.get_xpath(item.node))
+        app.logger.error("unimplemented!")
+        pass
+    #     item = self.model.itemFromIndex(current)
+    #     if item is not None:
+    #         self.model.get_xpath(item.node)
+    #         self.path_changed_event.emit(self.model.get_xpath(item.node))
 
     def model_xml_load_event(self, message):
         self.xml_load_event.emit(message)
@@ -301,85 +402,12 @@ class XMLTreeView(QTreeView):
         return result_message
 
 
-class SearchCriteria:
-    def __init__(self, text, match_count, highlight, options):
-        super().__init__()
-        self.text = text
-        self.match_count = match_count
-        self.highlight = highlight
-        self.options = options
-
-    def __str__(self):
-        return f"text={self.text}\tfind-item={self.match_count}\thighlight={self.highlight}"
-
-
-class XMLSearch(QDockWidget):
-    search_change_event = pyqtSignal('PyQt_PyObject')
-
-    def __init__(self):
-        super().__init__()
-        self.search_text = QLineEdit()
-        self.btn_next = QPushButton("Next")
-        self.highlight = QCheckBox("Highlight")
-        self.match_case = QCheckBox("Match Case")
-        self.match_option = QComboBox()
-        self.match_count = 0
-        self.init_ui()
-
-    def init_ui(self):
-        self.setWindowTitle("Search")
-        self.search_text.setPlaceholderText("Find in document")
-        self.search_text.textChanged.connect(self.search_text_changed)
-        self.btn_next.clicked.connect(self.next_button_press)
-        self.highlight.stateChanged.connect(self.search_changed)
-        self.match_case.stateChanged.connect(self.search_changed)
-        self.match_option.currentTextChanged.connect(self.search_changed)
-        self.match_option.setEditable(False)
-        self.match_option.addItems(_SEARCH_CRITERIA.keys())
-        self.match_option.setCurrentText("Contains")
-
-        search_layout = QHBoxLayout()
-        search_layout.addWidget(self.search_text)
-        search_layout.addWidget(self.btn_next)
-
-        options_layout = QHBoxLayout()
-        options_layout.addWidget(self.match_option)
-        options_layout.addWidget(self.match_case)
-        options_layout.addWidget(self.highlight)
-        options_layout.addStretch(1)
-
-        layout = QVBoxLayout()
-        layout.addLayout(options_layout)
-        layout.addLayout(search_layout)
-
-        container = QGroupBox()
-        container.setLayout(layout)
-
-        self.setWidget(container)
-
-    def search_changed(self):
-        # Set match options
-        match_options = _SEARCH_CRITERIA[self.match_option.currentText()]
-        if self.match_case.isChecked():
-            match_options = match_options | Qt.MatchCaseSensitive
-        # Always recursive and wrapped
-        # TODO: Remove recirsive search
-        match_options = match_options | Qt.MatchRecursive | Qt.MatchWrap
-
-        search_criteria = SearchCriteria(
-            text=self.search_text.text().strip(),
-            match_count=self.match_count,
-            highlight=self.highlight.isChecked(),
-            options=match_options
-        )
-        if search_criteria.text != "":
-            self.search_change_event.emit(search_criteria)
-
-    def search_text_changed(self):
-        self.match_count = 0
-        self.search_changed()
-
-    def next_button_press(self):
-        # Find next match
-        self.match_count += 1
-        self.search_changed()
+if __name__ == '__main__':
+    appl = QApplication(sys.argv)
+    _ = XMLTreeView()
+    _.show()
+    _.setMinimumSize(500, 800)
+    # _.set_file("/mnt/Dev/test/REC-xml-20081126.xml")
+    _.set_file("/mnt/Dev/test/part.XML")
+    # _.set_file("/mnt/Dev/test/nasa.xml")
+    sys.exit(appl.exec_())
