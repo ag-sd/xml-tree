@@ -3,12 +3,13 @@ from datetime import datetime
 from enum import Enum
 from functools import partial
 
-from PyQt5.QtCore import pyqtSignal, QObject
+from PyQt5.QtCore import pyqtSignal, QObject, QModelIndex
 from PyQt5.QtGui import QIcon, QPixmap, QColor
 from PyQt5.QtWidgets import QMenuBar, QAction, QMenu, QFileDialog, QFontDialog, QColorDialog, QMessageBox
 
 import app
 from app import AppSettings
+from app.XMLDataViews import XMLViewModel
 
 
 class MenuAction(Enum):
@@ -26,6 +27,7 @@ class MenuAction(Enum):
     TOP = "Go to top"
     BOTTOM = "Go to bottom"
     ABOUT = "About"
+    TABULATE = "Show as Table"
 
 
 class XMLTreeViewContextMenu(QMenu):
@@ -33,9 +35,12 @@ class XMLTreeViewContextMenu(QMenu):
 
     def __init__(self):
         super().__init__()
+        self.tabulate = _create_action(self, MenuAction.TABULATE.value, self.raise_event,
+                                       icon=QIcon.fromTheme("x-office-spreadsheet"), data=MenuAction.TABULATE)
         self.init_ui()
 
     def init_ui(self):
+        self.addAction(self.tabulate)
         self.addAction(_create_action(self, MenuAction.EXPAND.value, self.raise_event,
                                       icon=QIcon.fromTheme("list-add"), data=MenuAction.EXPAND))
         self.addAction(_create_action(self, MenuAction.COLLAPSE.value, self.raise_event,
@@ -48,8 +53,10 @@ class XMLTreeViewContextMenu(QMenu):
                                       icon=QIcon.fromTheme("view-refresh"), data=MenuAction.RELOAD))
 
     def raise_event(self, event, arg):
-        app.logger.debug(f"{event} -> {arg}")
         self.menu_event.emit(event, arg)
+
+    def set_table_menu(self, is_table_menu):
+        self.tabulate.setEnabled(is_table_menu)
 
 
 class MenuBar(QMenuBar):
@@ -166,6 +173,8 @@ class MenuBar(QMenuBar):
 
 class MenuHandler(QObject):
     load_file_event = pyqtSignal(str)
+    search_event = pyqtSignal()
+    tabulate_event = pyqtSignal(QModelIndex, list)
 
     def __init__(self, mainapp, treeview):
         super(MenuHandler, self).__init__()
@@ -175,6 +184,10 @@ class MenuHandler(QObject):
         self.menucontext = XMLTreeViewContextMenu()
         self.menubar.menu_event.connect(self.menu_event)
         self.menucontext.menu_event.connect(self.menu_event)
+
+    def request_context_menu(self, point, table_menu):
+        self.menucontext.set_table_menu(table_menu)
+        self.menucontext.exec_(point)
 
     def menu_event(self, menu_action, argument):
         match menu_action:
@@ -186,6 +199,7 @@ class MenuHandler(QObject):
                                                      filter="XML files (*.xml);;JSON files (*.json)")
                 if not file.isEmpty():
                     self.load_file_event.emit(file.toLocalFile())
+                    
             case MenuAction.RECENT:
                 file = argument
                 if os.path.exists(file):
@@ -196,12 +210,15 @@ class MenuHandler(QObject):
                     app.logger.warn(f"{file} was not found, removing it from recents list")
                     AppSettings.remove_from_recent(file)
                 self.menubar.update_recent_list()
+
             case MenuAction.ATTRIBUTES:
                 AppSettings.set_show_attributes(not AppSettings.show_attributes())
+
             case MenuAction.FONT:
                 _font, ok = QFontDialog.getFont(AppSettings.font(), parent=self.mainapp, caption="Select Font")
                 if ok:
                     AppSettings.set_font(_font)
+
             case MenuAction.COLOR:
                 theme = AppSettings.color_theme()
                 current = theme[argument]
@@ -211,12 +228,17 @@ class MenuHandler(QObject):
                 if _color.isValid():
                     theme[argument] = _color.name()
                     AppSettings.set_color_theme(theme)
+
             case MenuAction.ABOUT:
                 with open(os.path.join(os.path.dirname(__file__), "../resources/about.html"), 'r') as file:
                     about_html = file.read()
                 QMessageBox.about(self.mainapp, app.__APP_NAME__, about_html.format(APP_NAME=app.__APP_NAME__,
                                                                                     VERSION=app.__VERSION__,
                                                                                     YEAR=datetime.now().year))
+
+            case MenuAction.SEARCH:
+                self.search_event.emit()
+
             case MenuAction.EXIT:
                 self.mainapp.close()
 
@@ -227,16 +249,33 @@ class MenuHandler(QObject):
                 selected = self.treeview.selectedIndexes()
                 if len(selected):
                     self.treeview.expandRecursively(selected[0], depth=-1)
+
             case MenuAction.COLLAPSE:
                 selected = self.treeview.selectedIndexes()
                 if len(selected):
                     self.treeview.collapse(selected[0])
+
             case MenuAction.TOP:
                 self.treeview.scrollToTop()
+
             case MenuAction.BOTTOM:
                 self.treeview.scrollToBottom()
+
             case MenuAction.RELOAD:
                 self.treeview.reload()
+
+            case MenuAction.HIDE:
+                selected = self.treeview.selectedIndexes()
+                if len(selected):
+                    sorted_to_delete = XMLViewModel.get_models_sorted_by_ancestry(selected)
+                    for item in sorted_to_delete:
+                        self.treeview.model.removeRow(item.row(), item.parent())
+
+            case MenuAction.TABULATE:
+                selected = self.treeview.selectedIndexes()
+                if len(selected):
+                    item = self.treeview.treemodel.itemFromIndex(selected[0])
+                    self.tabulate_event.emit(selected[0], item.datalist)
 
             case _:
                 app.logger.error(f"Unexpected menu action {menu_action}")

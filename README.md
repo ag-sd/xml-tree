@@ -3,13 +3,14 @@ A tree viewer for XML documents
 
 ## Features
 - [x] View XML files as a tree
-- [x] Lazy load tree : https://www.qtcentre.org/threads/28082-QTreeView-own-model-dynamic-filling
+- [x] Lazy load tree : https://www.qtcentre.org/threads/28082-QTreeView-own-model-dynamic-filling\
+- [ ] Defend against malicious XML
 - [ ] Free-text search across file (Find in xml then create ancestry and programatically expand ancestry)
 - [ ] Show lists as Table
 - [ ] Generate XPath for selected node
 - [x] Support for HTML files
 - [x] Syntax Highlighting
-- [ ] Syntax Highlighting color theme
+- [x] Syntax Highlighting color theme
 - [ ] Highlight all Matches
 - [ ] ~~Exclude Matches~~  
 - [x] Menu Recent Document lookup
@@ -31,6 +32,12 @@ A tree viewer for XML documents
 - [x] Read JSON file
 - [ ] Support showing of comments
 - [ ] ~~Text based XML editor~~
+- [ ] Options window with:
+  - [ ] Color theme selection
+  - [ ] Font selection
+  - [ ] Attributes
+  - [ ] Amount of history to maintain
+  - [ ] Startup behavior (Open last file)
 
 ## Bugs
 - [ ] Long lines of text are not elided : https://stackoverflow.com/questions/66412941/qt-elide-rich-text
